@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "EmgRawDataCS": {
+      "commandName": "Project",
+      "workingDirectory": "$(ProjectDir)\\bin"
+    }
+  }
+}
