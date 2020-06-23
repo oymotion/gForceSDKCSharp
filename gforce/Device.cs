@@ -122,6 +122,18 @@ namespace gf
             if (RetCode.GF_SUCCESS == ret)
             {
                 name = str.ToString();
+
+                if (!name.EndsWith(")"))
+                {
+                    char[] address = getAddress().ToCharArray();
+
+                    name += "(";
+                    name += address[3];
+                    name += address[4];
+                    name += address[0];
+                    name += address[1];
+                    name += ")";
+                }
             }
             else
             {
