@@ -34,11 +34,12 @@ using System.Collections.Generic;
 using gf;
 using System.Text;
 
-public class GForceHub
+public class EMGRawData
 {
-    public static GForceHub Instance
+    public static EMGRawData Instance
     {
-        get {
+        get
+        {
             if (instance_ == null)
             {
                 // lock
@@ -46,7 +47,7 @@ public class GForceHub
 
                 if (instance_ == null)
                 {
-                    instance_ = new GForceHub();
+                    instance_ = new EMGRawData();
                 }
 
                 // unlock
@@ -62,7 +63,7 @@ public class GForceHub
         // Display the number of command line arguments.
         // System.Console.WriteLine(args.Length);
 
-        GForceHub.Instance.Reset();
+        EMGRawData.Instance.Reset();
 
         System.Console.WriteLine("------------------------------");
         System.Console.WriteLine("Working, press return to exit.");
@@ -70,7 +71,7 @@ public class GForceHub
 
         System.Console.ReadLine();
 
-        GForceHub.Instance.Exit();
+        EMGRawData.Instance.Exit();
     }
 
     public bool Reset()
@@ -116,7 +117,7 @@ public class GForceHub
     }
 
     private static Mutex mutex_ = new Mutex();
-    private static GForceHub instance_ = null;
+    private static EMGRawData instance_ = null;
     private Hub hub_ = null;
     private List<Device> foundDevices = new List<Device>();
     private Device connectedDevice_ = null;
@@ -155,12 +156,12 @@ public class GForceHub
 
         private void TryConnect()
         {
-            if (0 == gForceHub_.foundDevices.Count)
+            if (0 == emgRawData_.foundDevices.Count)
             {
                 // scan for more device
                 System.Console.WriteLine("No device found, scan again.");
-                gForceHub_.needDeviceScan_ = true;
-                gForceHub_.Scan();
+                emgRawData_.needDeviceScan_ = true;
+                emgRawData_.Scan();
 
                 return;
             }
@@ -168,40 +169,40 @@ public class GForceHub
             System.Console.WriteLine("Now try to connect to gForce with largest rssi.");
 
             // 2. sort devices using rssi by descending
-            gForceHub_.foundDevices.Sort(new DeviceComparer());
+            emgRawData_.foundDevices.Sort(new DeviceComparer());
             int n = 0;
 
             do
             {
-                if (n >= gForceHub_.foundDevices.Count)
+                if (n >= emgRawData_.foundDevices.Count)
                     break;
 
-                if (gForceHub_.foundDevices[n].getConnectionStatus() != Device.ConnectionStatus.Disconnected)
+                if (emgRawData_.foundDevices[n].getConnectionStatus() != Device.ConnectionStatus.Disconnected)
                 {
                     n++;
                     continue;
                 }
 
                 // try the one with best signal strength
-                RetCode ret = gForceHub_.foundDevices[n].connect();
+                RetCode ret = emgRawData_.foundDevices[n].connect();
 
                 // if failed to send connect command, try next
                 if (ret != RetCode.GF_SUCCESS)
                 {
                     System.Console.WriteLine("Connecting failed: {0}, try next.", ret);
-                    gForceHub_.foundDevices.RemoveAt(n);
+                    emgRawData_.foundDevices.RemoveAt(n);
                 }
                 else
                 {
                     // direct quit here if connecting started
                     return;
                 }
-            } while (gForceHub_.foundDevices.Count > 0);
+            } while (emgRawData_.foundDevices.Count > 0);
 
             // seems connection failed, try scan again
             System.Console.WriteLine("Scan again due to connecting errors.");
-            gForceHub_.needDeviceScan_ = true;
-            gForceHub_.Scan();
+            emgRawData_.needDeviceScan_ = true;
+            emgRawData_.Scan();
         }
 
         public override void onScanFinished()
@@ -220,19 +221,19 @@ public class GForceHub
             System.Console.WriteLine("onDeviceFound, name = \'{0}\', rssi = {1}",
                 device.getName(), device.getRssi());
 
-            gForceHub_.foundDevices.Add(device);
+            emgRawData_.foundDevices.Add(device);
         }
 
         public override void onDeviceDiscard(Device device)
         {
             System.Console.WriteLine("onDeviceDiscard, handle = name is \'{0}\'", device.getName());
 
-            bool ret = gForceHub_.foundDevices.Remove(device);
+            bool ret = emgRawData_.foundDevices.Remove(device);
             System.Console.WriteLine("gForceHub_.foundDevices.Remove: {0} -> {1}", device.getName(), ret);
 
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
-                gForceHub_.connectedDevice_ = null;
+                emgRawData_.connectedDevice_ = null;
                 TryConnect();
             }
         }
@@ -241,39 +242,68 @@ public class GForceHub
         {
             System.Console.WriteLine("onDeviceConnected, name is \'{0}\'", device.getName());
 
-            if (gForceHub_.connectedDevice_ == null)
+            if (emgRawData_.connectedDevice_ == null)
             {
-                gForceHub_.connectedDevice_ = device;
+                emgRawData_.connectedDevice_ = device;
 
                 if (device != null)
                 {
                     RetCode ret;
 
+                    device.enableDataNotification(0);
+
                     System.Console.WriteLine("setEmgConfig...");
-                    ret = device.setEmgConfig(650/*sampleRateHz*/, 0x00FF/*interestedChannels*/, 128/*packageDataLength*/, 8/*adcResolution*/);
+
+                    ret = device.setEmgConfig(
+                        650 /*sampleRateHz*/,
+                        0x00FF /*interestedChannels*/,
+                        128 /*packageDataLength*/,
+                        8 /*adcResolution*/,
+                        (Device dev, uint resp) =>
+                        {
+                            System.Console.WriteLine("setEmgConfig, response : {0}", (RetCode)resp);
+
+                            if ((RetCode)resp == RetCode.GF_SUCCESS)
+                            {
+                                // You may try single attribute one time to determine which attributes are supported
+                                DataNotifFlags flags = (DataNotifFlags)
+                                (DataNotifFlags.DNF_OFF
+                                    //| DataNotifFlags.DNF_ACCELERATE
+                                    //| DataNotifFlags.DNF_GYROSCOPE
+                                    //| DataNotifFlags.DNF_MAGNETOMETER
+                                    //| DataNotifFlags.DNF_EULERANGLE
+                                    | DataNotifFlags.DNF_QUATERNION
+                                    //| DataNotifFlags.DNF_ROTATIONMATRIX
+                                    //| DataNotifFlags.DNF_EMG_GESTURE
+                                    //| DataNotifFlags.DNF_EMG_RAW
+                                    //| DataNotifFlags.DNF_HID_MOUSE
+                                    //| DataNotifFlags.DNF_HID_JOYSTICK
+                                    | DataNotifFlags.DNF_DEVICE_STATUS
+                                    );
+
+                                // Because there is too much data when EMG data transfer is on,
+                                // GF_ERROR_TIMEOUT can be considered as GF_SUCCESS.
+                                System.Console.WriteLine("setDataSwitch...");
+
+                                ret = dev.setDataSwitch(
+                                    (uint)flags,
+                                    (Device dev2, uint resp2) =>
+                                    {
+                                        System.Console.WriteLine("setDataSwitch, response : {0}", (RetCode)resp2);
+
+                                        if ((RetCode)resp2 == RetCode.GF_SUCCESS)
+                                        {
+                                            dev2.enableDataNotification(1);
+                                        }
+                                    }
+                                );
+
+                                System.Console.WriteLine("setDataSwitch, ret : {0}", ret);
+                            }
+                        }
+                    );
+
                     System.Console.WriteLine("setEmgConfig, ret : {0}", ret);
-
-                    // You may try single attribute one time to determine which attributes are supported
-                    DataNotifFlags flags = (DataNotifFlags)
-                    (DataNotifFlags.DNF_OFF
-                        //| DataNotifFlags.DNF_ACCELERATE
-                        //| DataNotifFlags.DNF_GYROSCOPE
-                        //| DataNotifFlags.DNF_MAGNETOMETER
-                        //| DataNotifFlags.DNF_EULERANGLE
-                        //| DataNotifFlags.DNF_QUATERNION
-                        //| DataNotifFlags.DNF_ROTATIONMATRIX
-                        //| DataNotifFlags.DNF_EMG_GESTURE
-                        | DataNotifFlags.DNF_EMG_RAW
-                        //| DataNotifFlags.DNF_HID_MOUSE
-                        //| DataNotifFlags.DNF_HID_JOYSTICK
-                        | DataNotifFlags.DNF_DEVICE_STATUS
-                        );
-
-                    // Because there is too much data when EMG data transfer is on,
-                    // GF_ERROR_TIMEOUT can be considered as GF_SUCCESS.
-                    System.Console.WriteLine("setNotification...");
-                    ret = device.setNotification((uint)flags);
-                    System.Console.WriteLine("setNotification, ret : {0}", ret);
                 }
             }
         }
@@ -283,18 +313,18 @@ public class GForceHub
             System.Console.WriteLine("onDeviceDisconnected, name is \'{0}\', reason is {1}",
                 device.getName(), reason);
 
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
                 System.Console.WriteLine("Need connect");
-                gForceHub_.connectedDevice_ = null;
+                emgRawData_.connectedDevice_ = null;
 
-                bool ret = gForceHub_.foundDevices.Remove(device);
+                bool ret = emgRawData_.foundDevices.Remove(device);
                 System.Console.WriteLine("gForceHub_.foundDevices.Remove: {0} -> {1}", device.getName(), ret);
             }
 
-            if (gForceHub_.connectedDevice_ == null)
+            if (emgRawData_.connectedDevice_ == null)
             {
-                foreach (Device dev in gForceHub_.foundDevices)
+                foreach (Device dev in emgRawData_.foundDevices)
                 {
                     if (null == dev)
                         continue;
@@ -317,15 +347,15 @@ public class GForceHub
         public override void onOrientationData(Device device,
             float w, float x, float y, float z)
         {
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
                 System.Console.WriteLine("onOrientationData, orientation(w,x,y,z): ({0}, {1}, {2}, {3})", w, x, y, z);
             }
         }
 
-        public override void onGestureData(Device device, Device.Gesture gest)
+        public override void onGestureData(Device device, uint gest)
         {
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
                 System.Console.WriteLine("onGestureData, gesture: {0}", gest);
             }
@@ -333,7 +363,7 @@ public class GForceHub
 
         public override void onDeviceStatusChanged(Device device, Device.Status status)
         {
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
                 System.Console.WriteLine("onDeviceStatusChanged, status: {0}", status);
             }
@@ -341,7 +371,7 @@ public class GForceHub
 
         public override void onExtendedDeviceData(Device device, Device.DataType type, byte[] data)
         {
-            if (device == gForceHub_.connectedDevice_)
+            if (device == emgRawData_.connectedDevice_)
             {
                 System.Console.Write("onExtendedDeviceData, type: {0}, len: {1}, data: ", type, data.Length);
 
@@ -359,12 +389,12 @@ public class GForceHub
             }
         }
 
-        public Listener(GForceHub hub)
+        public Listener(EMGRawData owner)
         {
-            gForceHub_ = hub;
+            emgRawData_ = owner;
         }
 
-        private GForceHub gForceHub_ = null;
+        private EMGRawData emgRawData_ = null;
     };
 
     Listener listener_ = null;
